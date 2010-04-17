@@ -36,7 +36,11 @@ package alu_common is
 		orop,
 		xorop,
 		absop,
-		neg
+		neg,
+		adds,
+		subs,
+		addsx,
+		subsx
 	);
 end alu_common;
 
@@ -64,9 +68,6 @@ entity alu is
 end alu;
 
 architecture Behavioral of alu is
-	signal aext			: std_logic_vector(32 downto 0);
-	signal bext			: std_logic_vector(32 downto 0);
-	
 	signal outext		: std_logic_vector(32 downto 0);
 	
 	signal parityin		: std_logic_vector(31 downto 0);
@@ -79,8 +80,6 @@ architecture Behavioral of alu is
 	signal a0			: std_logic;
 	signal b0			: std_logic;
 begin
-	aext <= '0' & a;
-	bext <= '0' & b;
 	result <= outext(31 downto 0);
 	parityin <= outext(31 downto 0);
 	
@@ -95,14 +94,14 @@ begin
 	a0 <= '1' when a=X"00000000" else '0';
 	b0 <= '1' when b=X"00000000" else '0';
 	
-	flags:	process(opcode, aext, bext, cin, zin, outext, result0_32, result0_33, paritybit, a0, b0)
+	flags:	process(opcode, a, b, cin, zin, outext, result0_32, result0_33, paritybit, a0, b0)
 	begin
 		case opcode is
-			when add|sub =>
+			when add|sub|adds|subs =>
 				cout <= outext(32);
 				zout <= result0_32;
 				
-			when addx|subx =>
+			when addx|subx|addsx|subsx =>
 				cout <= outext(32);
 				zout <= result0_32 and zin;
 			
@@ -111,7 +110,7 @@ begin
 				zout <= result0_32;
 			
 			when absop|neg =>
-				cout <= aext(31);
+				cout <= a(31);
 				zout <= a0;
 			
 			when others =>
@@ -120,45 +119,68 @@ begin
 		end case;
 	end process;
 	
-	value:	process(aext, bext, cin, zin, opcode)
+	value:	process(a, b, cin, zin, opcode)
 	begin
 		case opcode is
 			when add =>
-				outext <= aext + bext;
+				outext <= ('0' & a) + ('0' & b);
 				
 			when addx =>
 				if cin='1' then
-					outext <= aext + bext + ('0' & X"00000001");
+					outext <= ('0' & a) + ('0' & b) + ('0' & X"00000001");
 				else
-					outext <= aext + bext;
+					outext <= ('0' & a) + ('0' & b);
 				end if;
 				
 			when sub =>
-				outext <= aext - bext;
+				outext <= ('0' & a) - ('0' & b);
 				
 			when subx =>
 				if cin='1' then
-					outext <= aext - bext - ('0' & X"00000001");
+					outext <= ('0' & a) - ('0' & b) - ('0' & X"00000001");
 				else
-					outext <= aext - bext;
+					outext <= ('0' & a) - ('0' & b);
 				end if;
 			
 			when andop =>
-				outext <= aext and bext;
+				outext(32) <= '0';
+				outext(31 downto 0) <= a and b;
 			
 			when orop =>
-				outext <= aext or bext;
+				outext(32) <= '0';
+				outext(31 downto 0) <= a or b;
 			
 			when xorop =>
-				outext <= aext xor bext;
+				outext(32) <= '0';
+				outext(31 downto 0) <= a xor b;
 			
 			when absop =>
 				outext(32) <= '0';
-				outext(31 downto 0) <= (abs(signed(aext(31 downto 0))));
+				outext(31 downto 0) <= (abs(signed(a)));
 			
 			when neg =>
 				outext(32) <= '0';
-				outext(31 downto 0) <= (-(signed(aext(31 downto 0))));
+				outext(31 downto 0) <= (-(signed(a)));
+			
+			when adds =>
+				outext <= (a(31) & a) + (b(31) & b);
+			
+			when subs =>
+				outext <= (a(31) & a) + (b(31) & b);
+				
+			when addsx =>
+				if cin='1' then
+					outext <= (a(31) & a) + (b(31) & b) + ('0' & X"00000001");
+				else
+					outext <= (a(31) & a) + (b(31) & b);
+				end if;
+				
+			when subsx =>
+				if cin='1' then
+					outext <= (a(31) & a) - (b(31) & b) - ('0' & X"00000001");
+				else
+					outext <= (a(31) & a) - (b(31) & b);
+				end if;
 		
 			when others =>
 				outext <= (others => '0');

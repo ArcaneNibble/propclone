@@ -183,6 +183,14 @@ architecture Behavioral of propcog is
 	signal aluzin						: std_logic;
 	signal alucout						: std_logic;
 	signal aluzout						: std_logic;
+	
+	signal outa_reg						: std_logic_vector(31 downto 0);
+	signal outb_reg						: std_logic_vector(31 downto 0);
+	signal dira_reg						: std_logic_vector(31 downto 0);
+	signal dirb_reg						: std_logic_vector(31 downto 0);
+	
+	signal use_special_register			: std_logic;
+	signal special_reg					: std_logic_vector(31 downto 0);
 begin
 	propalu	: alu port map(
 		opcode => aluop,
@@ -243,6 +251,11 @@ begin
 		end if;
 	end process;
 	-- synthesis translate_on
+	
+	outa <= outa_reg;
+	outb <= outb_reg;
+	dira <= dira_reg;
+	dirb <= dirb_reg;
 	
 	pc_next_calculator:	process(clk)
 	begin
@@ -366,7 +379,7 @@ begin
 		end case;
 	end process;
 	
-	dst_value <= douta;
+	dst_value <= douta when use_special_register='0' else special_reg;
 	src_value <= imm_value when imm='1' else doutb;
 	pc_branch_target <= imm_value(8 downto 0) when imm='1' else doutb(8 downto 0);
 	
@@ -408,10 +421,14 @@ begin
 				addrb <= (others => '0');
 				
 				use_branch_target_intent <= '0';
+				
+				use_special_register <= '0';
+				special_reg <= (others => '0');
 			else
 				if run='1' then
 					case fetch_decode_branch_state is
 						when opfetch =>
+							use_special_register <= '0';
 							addra_fetch <= pc;
 							fetch_decode_branch_state <= opfetchwait;
 						
@@ -449,6 +466,39 @@ begin
 							fetch_decode_branch_state <= argwait;
 						
 						when argwait =>
+							if dst_reg(8 downto 4)="11111" then	--it is a special register
+								use_special_register <= '1';
+								
+								case dst_reg(3 downto 0) is
+									when "0000" =>	--PAR
+										special_reg <= X"0000" & par & "00";
+										
+									when "0001" =>	--CNT
+										special_reg <= cnt;
+										
+									when "0010" =>	--INA
+										special_reg <= ina;
+										
+									when "0011" =>	--INB
+										special_reg <= inb;
+										
+									when "0100" =>	--OUTA
+										special_reg <= outa_reg;
+										
+									when "0101" =>	--OUTB
+										special_reg <= outb_reg;
+										
+									when "0110" =>	--DIRA
+										special_reg <= dira_reg;
+										
+									when "0111" =>	--DIRB
+										special_reg <= dirb_reg;
+								
+									when others =>
+										special_reg <= (others => '0');
+								end case;
+							end if;
+							
 							fetch_decode_branch_state <= opfetch;
 						
 						when others => null;
@@ -498,6 +548,11 @@ begin
 				alub <= (others => '0');
 				alucin <= '0';
 				aluzin <= '0';
+				
+				outa_reg <= (others => '0');
+				outb_reg <= (others => '0');
+				dira_reg <= (others => '0');
+				dirb_reg <= (others => '0');
 			else
 				if run='1' then
 					case execute_writeback_state is
@@ -550,6 +605,12 @@ begin
 									aluop <= sub;
 									alua <= real_dst;
 									alub <= X"00000001";
+								
+								when "111010"|"111011" =>	--tjnz, tjz
+									resultc <= '0';
+									aluop <= add;	--add 0, only for z flag
+									alua <= real_dst;
+									alub <= X"00000000";
 								
 								------------------------------------
 								
@@ -615,6 +676,30 @@ begin
 									aluop <= neg;
 									alua <= real_src;
 								
+								when "110100" =>	--adds
+									aluop <= adds;
+									alua <= real_dst;
+									alub <= real_src;
+								
+								when "110101" =>	--subs
+									aluop <= subs;
+									alua <= real_dst;
+									alub <= real_src;
+								
+								when "110110" =>	--addsx
+									aluop <= addsx;
+									alua <= real_dst;
+									alub <= real_src;
+									alucin <= c;
+									aluzin <= z;
+								
+								when "110111" =>	--subsx
+									aluop <= subsx;
+									alua <= real_dst;
+									alub <= real_src;
+									alucin <= c;
+									aluzin <= z;
+								
 								------------------------------------------------------
 								
 								--2 step alu opcodes
@@ -623,7 +708,7 @@ begin
 									aluop <= absop;
 									alua <= real_src;
 								
-								when "100010" =>	--addabs
+								when "100010"|"100011" =>	--addabs, subabs
 									aluop <= absop;
 									alua <= real_src;
 								
@@ -653,7 +738,23 @@ begin
 										use_old_pc <= '1';
 									end if;
 									
-								when "100000"|"110010"|"100001"|"110011"|"011000"|"011010"|"011011"|"101010"|"101001" =>	--all simple alu opcodes
+								when "111010" =>	--tjnz
+									result <= aluresult;
+									resultz <= aluzout;
+									if aluzout='0' then	--it is not zero, jump
+										throw_away_opcode <= '1';
+										use_old_pc <= '1';
+									end if;
+									
+								when "111011" =>	--tjz
+									result <= aluresult;
+									resultz <= aluzout;
+									if aluzout='1' then	--it is zero, jump
+										throw_away_opcode <= '1';
+										use_old_pc <= '1';
+									end if;
+									
+								when "100000"|"110010"|"100001"|"110011"|"011000"|"011010"|"011011"|"101010"|"101001"|"110100"|"110101"|"110110"|"110111" =>	--all simple alu opcodes
 									result <= aluresult;
 									resultc <= alucout;
 									resultz <= aluzout;
@@ -666,6 +767,11 @@ begin
 									
 								when "100010" =>	--addabs
 									aluop <= add;
+									alua <= real_dst;
+									alub <= aluresult;
+									
+								when "100011" =>	--subabs
+									aluop <= sub;
 									alua <= real_dst;
 									alub <= aluresult;
 								
@@ -681,24 +787,66 @@ begin
 						
 						when writeback =>
 							if real_wr='1' then
-								wea_execute <= '1';
+								if dst_reg(8 downto 4)/="11111" then
+									wea_execute <= '1';
+								else
+									wea_execute <= '0';
+								end if;
+								
 								addra_execute <= dst_reg;
+								
 								case instr_copy is
-									when "010111"|"111001"|"100000"|"110010"|"100001"|"110011"|"011000"|"011010"|"011011"|"101010"|"101001"|"101000" =>
-										dina <= result;
+									when "010111"|"111001"|"100000"|"110010"|"100001"|"110011"|"011000"|"011010"|"011011"|"101010"|"101001"|"101000"|"110100"|"110101"|"110110"|"110111"|"111010"|"111011" =>
+										if dst_reg(8 downto 4)="11111" then
+											case dst_reg(3 downto 0) is
+												when "0100" =>	--OUTA
+													outa_reg <= result;
+													
+												when "0101" =>	--OUTB
+													outb_reg <= result;
+													
+												when "0110" =>	--DIRA
+													dira_reg <= result;
+													
+												when "0111" =>	--DIRB
+													dirb_reg <= result;
+											
+												when others => null;
+											end case;
+										else
+											dina <= result;
+										end if;
 									
-									when "101011"|"100010"|"011001" =>	--absneg, addabs, andn
-										dina <= aluresult;
+									when "101011"|"100010"|"100011"|"011001" =>	--absneg, addabs, subabs, andn
+										if dst_reg(8 downto 4)="11111" then
+											case dst_reg(3 downto 0) is
+												when "0100" =>	--OUTA
+													outa_reg <= aluresult;
+													
+												when "0101" =>	--OUTB
+													outb_reg <= aluresult;
+													
+												when "0110" =>	--DIRA
+													dira_reg <= aluresult;
+													
+												when "0111" =>	--DIRB
+													dirb_reg <= aluresult;
+											
+												when others => null;
+											end case;
+										else
+											dina <= aluresult;
+										end if;
 									
 									when others => null;
 								end case;
 							end if;
 							if real_wc='1' then
 								case instr_copy is
-									when "010111"|"111001"|"100000"|"110010"|"100001"|"110011"|"011000"|"011010"|"011011"|"101010"|"101001"|"101011"|"101000" =>
+									when "010111"|"111001"|"100000"|"110010"|"100001"|"110011"|"011000"|"011010"|"011011"|"101010"|"101001"|"101011"|"101000"|"110100"|"110101"|"110110"|"110111"|"111010"|"111011" =>
 										c <= resultc;
 									
-									when "100010"|"011001" =>	--addabs, andn
+									when "100010"|"100011"|"011001" =>	--addabs, subabs, andn
 										c <= alucout;
 									
 									when others => null;
@@ -706,10 +854,10 @@ begin
 							end if;
 							if real_wz='1' then
 								case instr_copy is
-									when "010111"|"111001"|"100000"|"110010"|"100001"|"110011"|"011000"|"011010"|"011011"|"101010"|"101001"|"101011"|"101000" =>
+									when "010111"|"111001"|"100000"|"110010"|"100001"|"110011"|"011000"|"011010"|"011011"|"101010"|"101001"|"101011"|"101000"|"110100"|"110101"|"110110"|"110111"|"111010"|"111011" =>
 										z <= resultz;
 									
-									when "100010"|"011001" =>	--addabs, andn
+									when "100010"|"100011"|"011001" =>	--addabs, subabs, andn
 										z <= aluzout;
 									
 									when others => null;
